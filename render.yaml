@@ -1,0 +1,17 @@
+services:
+  - type: worker
+    name: noor-dreams-bot
+    env: python
+    region: frankfurt
+    plan: starter         # use "starter" or higher to stay 24/7. Free tiers may sleep/suspend.
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_ENVIRONMENT   # keep if your Pinecone project still uses it; otherwise delete this line
+        sync: false
