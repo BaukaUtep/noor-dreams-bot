@@ -47,5 +47,4 @@ tzdata==2025.2
 tzlocal==5.3.1
 urllib3==1.26.20
 langdetect==1.0.9
-fastapi
-uvicorn[standard]
+
