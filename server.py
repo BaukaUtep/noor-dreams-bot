@@ -1,41 +1,17 @@
-# server.py (фрагмент сверху)
-import os, importlib
+# server.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Попытаться найти answer_question в популярных путях
-CANDIDATES = [
-    "bot", "main", "app",
-    "worker.main", "telegram_bot",
-    "noor_dreams_bot.main", "noor_dreams_bot.bot",
-    "src.main", "src.bot",
-]
-
-answer_question = None
-for modname in CANDIDATES:
-    try:
-        mod = importlib.import_module(modname)
-        if hasattr(mod, "answer_question"):
-            answer_question = getattr(mod, "answer_question")
-            break
-    except Exception:
-        continue
-
-if answer_question is None:
-    raise RuntimeError(
-        f"Не удалось импортировать answer_question. "
-        f"Проверь, в каком файле она определена и скорректируй импорт. "
-        f"Пробовали: {CANDIDATES}"
-    )
+# ⬇️ ЯВНЫЙ импорт из bot.py
+from bot import answer_question   # <-- здесь ИМЯ ФАЙЛА и ФУНКЦИИ из твоего проекта
 
 app = FastAPI(title="DreamWisdom API")
+
+# Разрешаем запросы с локалки и всех *.web.app / *.firebaseapp.com (Firebase превью/прод)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
     allow_origin_regex=r"^https://([a-z0-9-]+)\.(web|firebaseapp)\.com$",
     allow_methods=["*"],
     allow_headers=["*"],
