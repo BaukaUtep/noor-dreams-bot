@@ -13,6 +13,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "http://localhost:5173",
         "https://dreamwisdom-firebase-46707352.web.app",
         "https://dreamwisdom-firebase-46707352.firebaseapp.com",
@@ -50,6 +51,7 @@ def api_interpret_get(message: str = Query(..., min_length=1)):
         return {"answer": interpret(message)}
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error")
+
 
 
 
