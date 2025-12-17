@@ -1,26 +1,53 @@
+# bot.py (IMPROVED VERSION)
 import os
 import time
 import requests
 import re
 import signal
 import sys
+import logging
 from typing import List
+from collections import defaultdict
 
 from openai import OpenAI
 from pinecone import Pinecone
 
-# ===== 1. CONFIG =====
+# ===== CONFIGURATION =====
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV     = os.getenv("PINECONE_ENVIRONMENT")    # may be None in new SDKs
+PINECONE_ENV     = os.getenv("PINECONE_ENVIRONMENT")
 PINECONE_INDEX   = "noor-dreams"
 
+# Model settings
 EMBED_MODEL      = "text-embedding-3-small"
-EMBED_DIM        = 1536            # must match your index dimension
-CHAT_MODEL       = "gpt-4o-mini"  
+EMBED_DIM        = 1536
+CHAT_MODEL       = "gpt-4o-mini"
 TOP_K            = 5
+
+# API endpoints
 TELEGRAM_API     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+# Limits and timeouts
+MAX_MESSAGE_LENGTH    = 500
+MIN_MESSAGE_LENGTH    = 3
+MAX_TOKENS_OUTPUT     = 800
+OPENAI_TIMEOUT        = 30.0
+TELEGRAM_TIMEOUT      = 30
+REQUEST_TIMEOUT       = 10
+MIN_REQUEST_INTERVAL  = 3  # seconds between requests per user
+
+# Telegram limits
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+
+# File for persisting offset
+OFFSET_FILE = "bot_offset.txt"
+
+# Retrieval settings
+MIN_CONTEXTS     = 2
+PER_SYMBOL_MAX   = 3
+UNFILTERED_TOP_K = 20
+TRANSLATE_FALLBACK = True
 
 # Fallback messages
 FALLBACK = {
@@ -29,7 +56,7 @@ FALLBACK = {
     "Kazakh":  "Түсіндіру берілген үзінділерде жоқ."
 }
 
-# Allowed mild generalizations (modern -> classical symbolic family)
+# Allowed mild generalizations
 GENERALIZATION_HINTS = """
 Allowed mild generalizations (label them):
 phone/mobile -> communication/message (generalized)
@@ -38,7 +65,18 @@ car/driving/vehicle -> journey/travel (generalized)
 computer/laptop -> record/knowledge (generalized)
 """
 
-# ===== 2. INIT CLIENTS =====
+# ===== LOGGING SETUP =====
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ===== VALIDATE ENVIRONMENT =====
 if not TELEGRAM_TOKEN:
     raise RuntimeError("No TELEGRAM_TOKEN set")
 if not OPENAI_API_KEY:
@@ -46,12 +84,52 @@ if not OPENAI_API_KEY:
 if not PINECONE_API_KEY:
     raise RuntimeError("No PINECONE_API_KEY set")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV) if PINECONE_ENV else Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(PINECONE_INDEX)
+# ===== INIT CLIENTS =====
+try:
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV) if PINECONE_ENV else Pinecone(api_key=PINECONE_API_KEY)
+    index = pc.Index(PINECONE_INDEX)
+    logger.info("API clients initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize API clients: {e}")
+    raise
 
-# ===== 3. TELEGRAM HELPERS =====
-def get_updates(offset=None, timeout=30):
+# ===== RATE LIMITING =====
+user_last_request = defaultdict(float)  # chat_id -> timestamp
+
+def check_rate_limit(chat_id: int) -> bool:
+    """Returns True if user can make request, False if rate limited"""
+    now = time.time()
+    last_request = user_last_request[chat_id]
+
+    if now - last_request < MIN_REQUEST_INTERVAL:
+        return False
+
+    user_last_request[chat_id] = now
+    return True
+
+# ===== OFFSET PERSISTENCE =====
+def save_offset(offset: int):
+    """Save the last processed update offset to file"""
+    try:
+        with open(OFFSET_FILE, 'w') as f:
+            f.write(str(offset))
+    except Exception as e:
+        logger.error(f"Failed to save offset: {e}")
+
+def load_offset() -> int:
+    """Load the last processed update offset from file"""
+    if os.path.exists(OFFSET_FILE):
+        try:
+            with open(OFFSET_FILE, 'r') as f:
+                return int(f.read().strip())
+        except Exception as e:
+            logger.error(f"Failed to load offset: {e}")
+    return None
+
+# ===== TELEGRAM HELPERS =====
+def get_updates(offset=None, timeout=TELEGRAM_TIMEOUT):
+    """Get updates from Telegram with improved error handling"""
     try:
         r = requests.get(
             f"{TELEGRAM_API}/getUpdates",
@@ -61,27 +139,69 @@ def get_updates(offset=None, timeout=30):
         r.raise_for_status()
         return r.json().get("result", [])
     except requests.exceptions.Timeout:
-        print("get_updates timeout, returning empty list")
+        logger.debug("get_updates timeout (normal for long polling)")
         return []
     except requests.exceptions.RequestException as e:
-        print("get_updates request error:", e)
+        logger.error(f"get_updates request error: {e}")
         return []
     except Exception as e:
-        print("get_updates unexpected error:", e)
+        logger.error(f"get_updates unexpected error: {e}")
         return []
 
-def send_message(chat_id, text):
+def send_message(chat_id: int, text: str):
+    """
+    Send message to Telegram, handling the 4096 character limit
+    by splitting into multiple messages if needed
+    """
+    if not text:
+        logger.warning(f"Attempted to send empty message to {chat_id}")
+        return
+
     try:
-        requests.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-            timeout=10,
-        )
-    except Exception as e:
-        print("send_message error:", e)
+        # If message fits in one telegram message
+        if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+            requests.post(
+                f"{TELEGRAM_API}/sendMessage",
+                json={"chat_id": chat_id, "text": text},
+                timeout=REQUEST_TIMEOUT,
+            )
+        else:
+            # Split into chunks
+            chunks = []
+            current_chunk = ""
 
-# ===== 4. LANGUAGE DETECTION =====
+            for line in text.split('\n'):
+                if len(current_chunk) + len(line) + 1 <= TELEGRAM_MAX_MESSAGE_LENGTH:
+                    current_chunk += line + '\n'
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk)
+                    current_chunk = line + '\n'
+
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            # Send chunks
+            for i, chunk in enumerate(chunks):
+                requests.post(
+                    f"{TELEGRAM_API}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": chunk if i == 0 else f"(continued...)\n\n{chunk}"
+                    },
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if i < len(chunks) - 1:
+                    time.sleep(0.5)  # Avoid rate limits
+
+            logger.info(f"Sent long message to {chat_id} in {len(chunks)} parts")
+
+    except Exception as e:
+        logger.error(f"send_message error for chat {chat_id}: {e}")
+
+# ===== LANGUAGE DETECTION =====
 def detect_language(text: str) -> str:
+    """Detect language from text (Kazakh, Russian, or English)"""
     t = text.lower()
     # Kazakh distinctive letters
     if re.search(r"[ңғүұқәіөһ]", t):
@@ -97,28 +217,27 @@ LANG_NAME = {
     "kk": "Kazakh"
 }
 
-# ===== 5. EMBEDDINGS =====
+# ===== EMBEDDINGS =====
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    resp = openai_client.embeddings.create(
-        model=EMBED_MODEL,
-        input=texts,
-        dimensions=EMBED_DIM
-    )
-    return [d.embedding for d in resp.data]
+    """Generate embeddings for texts using OpenAI"""
+    try:
+        resp = openai_client.embeddings.create(
+            model=EMBED_MODEL,
+            input=texts,
+            dimensions=EMBED_DIM,
+            timeout=OPENAI_TIMEOUT
+        )
+        return [d.embedding for d in resp.data]
+    except Exception as e:
+        logger.error(f"Embedding error: {e}")
+        raise
 
-# ===== 6. RETRIEVAL (robust multilingual) =====
-MIN_CONTEXTS     = 2         # if we get less, try the next pass
-PER_SYMBOL_MAX   = 3         # cap sentences per symbol to keep prompt tight
-UNFILTERED_TOP_K = 20        # expand when we remove the lang filter
-TRANSLATE_FALLBACK = True    # set False if you don't want pass (C)
-
+# ===== RETRIEVAL =====
 def _build_grouped_contexts(matches):
     """
-    Group sentences by symbol_id and keep up to PER_SYMBOL_MAX per symbol.
-    Accepts metadata keys from your schema:
-      symbol_id, symbol_label, sentence_index, text, lang
+    Group sentences by symbol_id and keep up to PER_SYMBOL_MAX per symbol
     """
-    buckets = {}  # (symbol_id) -> {"label": str, "items": [(sent_idx, text, lang)]}
+    buckets = {}
     for m in matches or []:
         md = m.get("metadata", {}) if isinstance(m, dict) else (getattr(m, "metadata", {}) or {})
 
@@ -135,55 +254,70 @@ def _build_grouped_contexts(matches):
         if len(b["items"]) < PER_SYMBOL_MAX:
             b["items"].append((sent_idx, sent_text, lang))
 
-    # turn into prompt-ready blocks
+    # Convert to prompt-ready blocks
     contexts = []
     for sid, data in buckets.items():
         label = data["label"]
         lines = [f"[{label} · {sid}]"]
         for (idx, text, lg) in data["items"]:
-            # include sentence index; language tag helps when it's cross-lang
             lg_tag = f" ({lg})" if lg else ""
             lines.append(f"• (sent {idx}){lg_tag} {text}")
         contexts.append("\n".join(lines))
+
     return contexts
 
 def _query_with_filter(emb, filter_obj, top_k):
+    """Query Pinecone with optional filter"""
     res = index.query(vector=emb, top_k=top_k, include_metadata=True, filter=filter_obj)
     return res.get("matches") if isinstance(res, dict) else getattr(res, "matches", [])
 
 def _translate_to_english(text: str) -> str:
-    # lightweight translation using your current chat model
-    chat = openai_client.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=[
-            {"role": "system", "content": "Translate to English. Keep names and religious terms intact."},
-            {"role": "user",   "content": text}
-        ],
-        max_tokens=800
-    )
-    return chat.choices[0].message.content.strip()
+    """Translate text to English using OpenAI"""
+    try:
+        chat = openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": "Translate to English. Keep names and religious terms intact."},
+                {"role": "user",   "content": text}
+            ],
+            max_tokens=800,
+            timeout=OPENAI_TIMEOUT
+        )
+        return chat.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Translation error: {e}")
+        raise
 
 def retrieve_context(question: str, lang_code: str, top_k=TOP_K):
-    # Pass A: same-language
+    """
+    Retrieve relevant context from Pinecone with multi-pass strategy:
+    1. Try same-language matches
+    2. Try cross-language matches
+    3. Try translating to English and searching
+    """
     emb = embed_texts([question])[0]
+
+    # Pass A: same-language
     try:
         matches = _query_with_filter(emb, {"lang": lang_code}, top_k)
         contexts = _build_grouped_contexts(matches)
         if len(contexts) >= MIN_CONTEXTS:
+            logger.info(f"Found {len(contexts)} contexts (same-language)")
             return contexts
     except Exception as e:
-        print("Pinecone query error (filtered):", e)
+        logger.error(f"Pinecone query error (filtered): {e}")
 
     # Pass B: unfiltered (cross-language)
     try:
         matches = _query_with_filter(emb, None, UNFILTERED_TOP_K)
         contexts = _build_grouped_contexts(matches)
         if contexts:
+            logger.info(f"Found {len(contexts)} contexts (cross-language)")
             return contexts
     except Exception as e:
-        print("Pinecone query error (unfiltered):", e)
+        logger.error(f"Pinecone query error (unfiltered): {e}")
 
-    # Pass C: translate query to EN and filter on lang="en"
+    # Pass C: translate to English and search
     if TRANSLATE_FALLBACK:
         try:
             eng_q = _translate_to_english(question)
@@ -191,14 +325,17 @@ def retrieve_context(question: str, lang_code: str, top_k=TOP_K):
             matches = _query_with_filter(emb_en, {"lang": "en"}, UNFILTERED_TOP_K)
             contexts = _build_grouped_contexts(matches)
             if contexts:
+                logger.info(f"Found {len(contexts)} contexts (translated)")
                 return contexts
         except Exception as e:
-            print("Pinecone query error (translate→en):", e)
+            logger.error(f"Pinecone query error (translate→en): {e}")
 
+    logger.warning("No contexts found for question")
     return []
 
-# ===== 7. PROMPT BUILDING =====
+# ===== PROMPT BUILDING =====
 def build_system_prompt(lang: str, contexts: List[str]) -> str:
+    """Build system prompt with retrieved contexts"""
     lang_name = LANG_NAME.get(lang, "English")
     fb = FALLBACK.get(lang_name, FALLBACK["English"])
     joined = "\n---\n".join(contexts) if contexts else "[NO RELEVANT EXCERPTS]"
@@ -242,69 +379,147 @@ PROHIBITED:
 """.strip()
 
 def build_user_prompt(question: str, lang: str) -> str:
+    """Build user prompt with question"""
     lang_name = LANG_NAME.get(lang, "English")
     return f"Interpret this dream in {lang_name} using only the excerpts provided above: {question}"
 
-# ===== 8. CALL OPENAI CHAT =====
+# ===== CALL OPENAI CHAT =====
 def interpret(question: str) -> str:
+    """
+    Main interpretation function - used by both bot and web API
+    """
+    # Validate input
+    question = question.strip()
+    if len(question) < MIN_MESSAGE_LENGTH:
+        raise ValueError(f"Dream too short (minimum {MIN_MESSAGE_LENGTH} characters)")
+    if len(question) > MAX_MESSAGE_LENGTH:
+        raise ValueError(f"Dream too long (maximum {MAX_MESSAGE_LENGTH} characters)")
+
     lang = detect_language(question)
+    logger.info(f"Interpreting question in {LANG_NAME.get(lang, 'unknown')} language")
+
     contexts = retrieve_context(question, lang)
     system_prompt = build_system_prompt(lang, contexts)
     user_prompt = build_user_prompt(question, lang)
 
-    chat = openai_client.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt}
-        ],
-        max_tokens=800,
-        temperature=0.3
-    )
-    return chat.choices[0].message.content.strip()
+    try:
+        chat = openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt}
+            ],
+            max_tokens=MAX_TOKENS_OUTPUT,
+            temperature=0.3,
+            timeout=OPENAI_TIMEOUT
+        )
+        answer = chat.choices[0].message.content.strip()
+        logger.info("Successfully generated interpretation")
+        return answer
 
-# ===== 9. MAIN LOOP =====
+    except Exception as e:
+        logger.error(f"OpenAI API error: {e}")
+        raise
+
+# ===== MAIN BOT LOOP =====
 def signal_handler(sig, frame):
-    print("\nShutting down gracefully...")
+    """Handle graceful shutdown"""
+    logger.info("Received shutdown signal, stopping bot...")
     sys.exit(0)
 
 def main():
-    print("Dream bot started.")
-    # Register signal handler for graceful shutdown
+    """Main bot loop with improved error handling and rate limiting"""
+    logger.info("Dream bot started successfully")
     signal.signal(signal.SIGINT, signal_handler)
-    
-    offset = None
+
+    offset = load_offset()
+    if offset:
+        logger.info(f"Resuming from offset {offset}")
+
     while True:
         try:
             updates = get_updates(offset)
+
             for upd in updates:
                 offset = upd["update_id"] + 1
+
                 msg = upd.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "")
+
                 if not chat_id or not text:
                     continue
 
+                logger.info(f"Received message from {chat_id}: {text[:50]}...")
+
+                # Handle /start command
                 if text.startswith("/start"):
                     send_message(
                         chat_id,
-                        "👋 Welcome! Send me your dream (English, Russian or Kazakh) and I will interpret it using classical Islamic sources."
+                        "👋 Welcome! Send me your dream (English, Russian or Kazakh) and I will interpret it using classical Islamic sources.\n\n"
+                        f"📝 Please keep your dream description under {MAX_MESSAGE_LENGTH} characters."
                     )
                     continue
 
+                # Check rate limit
+                if not check_rate_limit(chat_id):
+                    send_message(
+                        chat_id,
+                        f"⏳ Please wait {MIN_REQUEST_INTERVAL} seconds between requests."
+                    )
+                    logger.warning(f"Rate limit exceeded for chat {chat_id}")
+                    continue
+
+                # Validate message length
+                if len(text) > MAX_MESSAGE_LENGTH:
+                    send_message(
+                        chat_id,
+                        f"❌ Dream too long. Please keep it under {MAX_MESSAGE_LENGTH} characters.\n\n"
+                        f"Your message: {len(text)} characters"
+                    )
+                    logger.warning(f"Message too long from chat {chat_id}: {len(text)} chars")
+                    continue
+
+                if len(text.strip()) < MIN_MESSAGE_LENGTH:
+                    send_message(
+                        chat_id,
+                        f"❌ Dream too short. Please provide at least {MIN_MESSAGE_LENGTH} characters."
+                    )
+                    continue
+
+                # Process the dream
                 send_message(chat_id, "⏳ Interpreting your dream...")
+
                 try:
                     answer = interpret(text)
+                    send_message(chat_id, answer)
+                    logger.info(f"Successfully processed dream for chat {chat_id}")
+
+                except ValueError as e:
+                    # Client error (validation)
+                    send_message(chat_id, f"❌ {str(e)}")
+                    logger.warning(f"Validation error for chat {chat_id}: {e}")
+
                 except Exception as e:
-                    print("Interpret error:", e)
-                    answer = "❌ Error. Please try again later."
-                send_message(chat_id, answer)
+                    # Server error
+                    send_message(
+                        chat_id,
+                        "❌ Sorry, I encountered an error while interpreting your dream. Please try again in a moment."
+                    )
+                    logger.error(f"Error processing dream for chat {chat_id}: {e}", exc_info=True)
+
+            # Save offset after processing all updates
+            if offset:
+                save_offset(offset)
+
             time.sleep(1)
+
         except KeyboardInterrupt:
-            print("\nShutting down gracefully...")
+            logger.info("Shutting down gracefully...")
             break
+
         except Exception as e:
-            print("Main loop error:", e)
+            logger.error(f"Main loop error: {e}", exc_info=True)
             time.sleep(5)  # Wait before retrying
 
 if __name__ == "__main__":
