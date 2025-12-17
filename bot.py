@@ -1,4 +1,4 @@
-# bot.py (IMPROVED VERSION)
+# bot.py (IMPROVED VERSION - Telegram Bot, Text Only)
 import os
 import time
 import requests
@@ -19,10 +19,10 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV     = os.getenv("PINECONE_ENVIRONMENT")
 PINECONE_INDEX   = "noor-dreams"
 
-# Model settings
+# Model settings (TEXT ONLY)
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIM        = 1536
-CHAT_MODEL       = "gpt-4o-mini"
+CHAT_MODEL       = "gpt-4o-mini"  # TEXT ONLY - no images, no voice
 TOP_K            = 5
 
 # API endpoints
@@ -35,7 +35,10 @@ MAX_TOKENS_OUTPUT     = 800
 OPENAI_TIMEOUT        = 30.0
 TELEGRAM_TIMEOUT      = 30
 REQUEST_TIMEOUT       = 10
-MIN_REQUEST_INTERVAL  = 3  # seconds between requests per user
+
+# Rate limiting (Telegram gets LESS traffic than web)
+# More lenient since web is the primary channel
+MIN_REQUEST_INTERVAL  = 2  # seconds between requests per user (was 3)
 
 # Telegram limits
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
@@ -90,6 +93,7 @@ try:
     pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV) if PINECONE_ENV else Pinecone(api_key=PINECONE_API_KEY)
     index = pc.Index(PINECONE_INDEX)
     logger.info("API clients initialized successfully")
+    logger.info(f"Using model: {CHAT_MODEL} (text-only)")
 except Exception as e:
     logger.error(f"Failed to initialize API clients: {e}")
     raise
@@ -97,16 +101,20 @@ except Exception as e:
 # ===== RATE LIMITING =====
 user_last_request = defaultdict(float)  # chat_id -> timestamp
 
-def check_rate_limit(chat_id: int) -> bool:
-    """Returns True if user can make request, False if rate limited"""
+def check_rate_limit(chat_id: int) -> tuple[bool, float]:
+    """
+    Returns (can_proceed, seconds_remaining)
+    """
     now = time.time()
     last_request = user_last_request[chat_id]
+    time_since_last = now - last_request
 
-    if now - last_request < MIN_REQUEST_INTERVAL:
-        return False
+    if time_since_last < MIN_REQUEST_INTERVAL:
+        remaining = MIN_REQUEST_INTERVAL - time_since_last
+        return False, remaining
 
     user_last_request[chat_id] = now
-    return True
+    return True, 0.0
 
 # ===== OFFSET PERSISTENCE =====
 def save_offset(offset: int):
@@ -151,7 +159,7 @@ def get_updates(offset=None, timeout=TELEGRAM_TIMEOUT):
 def send_message(chat_id: int, text: str):
     """
     Send message to Telegram, handling the 4096 character limit
-    by splitting into multiple messages if needed
+    TEXT ONLY - no images, voice, or other media
     """
     if not text:
         logger.warning(f"Attempted to send empty message to {chat_id}")
@@ -166,7 +174,7 @@ def send_message(chat_id: int, text: str):
                 timeout=REQUEST_TIMEOUT,
             )
         else:
-            # Split into chunks
+            # Split into chunks if response is very long
             chunks = []
             current_chunk = ""
 
@@ -201,14 +209,28 @@ def send_message(chat_id: int, text: str):
 
 # ===== LANGUAGE DETECTION =====
 def detect_language(text: str) -> str:
-    """Detect language from text (Kazakh, Russian, or English)"""
+    """Detect language from text (Kazakh, Russian, or English) - IMPROVED"""
     t = text.lower()
-    # Kazakh distinctive letters
-    if re.search(r"[ңғүұқәіөһ]", t):
+
+    # Kazakh distinctive letters (expanded with uppercase variants)
+    if re.search(r"[ңғүұқәіөһӘәІіҢңҒғҮүҰұҚқӨөҺһ]", t):
         return "kk"
-    # Cyrillic (assume Russian if not Kazakh-specific)
+
+    # Common Kazakh words that don't contain distinctive letters
+    # This helps detect words like "арыстан" (lion)
+    kazakh_indicators = [
+        "арыстан", "түс", "түсінде", "көру", "көрсе", "болу", "білдіреді",
+        "мүмкін", "пайғамбар", "жүру", "келу", "бару", "қарау", "деген",
+        "екен", "еді", "емес", "тұра"
+    ]
+    for indicator in kazakh_indicators:
+        if indicator in t:
+            return "kk"
+
+    # Cyrillic (assume Russian if not Kazakh)
     if re.search(r"[А-Яа-яЁё]", text):
         return "ru"
+
     return "en"
 
 LANG_NAME = {
@@ -387,6 +409,7 @@ def build_user_prompt(question: str, lang: str) -> str:
 def interpret(question: str) -> str:
     """
     Main interpretation function - used by both bot and web API
+    TEXT ONLY - gpt-4o-mini (no images, no voice)
     """
     # Validate input
     question = question.strip()
@@ -396,9 +419,10 @@ def interpret(question: str) -> str:
         raise ValueError(f"Dream too long (maximum {MAX_MESSAGE_LENGTH} characters)")
 
     lang = detect_language(question)
-    logger.info(f"Interpreting question in {LANG_NAME.get(lang, 'unknown')} language")
+    logger.info(f"Question: '{question[:50]}...' | Detected language: {LANG_NAME.get(lang, 'unknown')} ({lang})")
 
     contexts = retrieve_context(question, lang)
+    logger.info(f"Retrieved {len(contexts)} context blocks")
     system_prompt = build_system_prompt(lang, contexts)
     user_prompt = build_user_prompt(question, lang)
 
@@ -428,8 +452,19 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 def main():
-    """Main bot loop with improved error handling and rate limiting"""
-    logger.info("Dream bot started successfully")
+    """
+    Main bot loop with improved error handling and rate limiting
+    TEXT ONLY - handles only text messages (no images, voice, documents)
+    """
+    logger.info("=" * 60)
+    logger.info("Dream Bot Started (Telegram)")
+    logger.info("=" * 60)
+    logger.info(f"Model: {CHAT_MODEL} (text-only)")
+    logger.info(f"Rate limit: {MIN_REQUEST_INTERVAL}s per user")
+    logger.info(f"Message length: {MIN_MESSAGE_LENGTH}-{MAX_MESSAGE_LENGTH} chars")
+    logger.info(f"Note: Web API is primary channel, Telegram is secondary")
+    logger.info("=" * 60)
+
     signal.signal(signal.SIGINT, signal_handler)
 
     offset = load_offset()
@@ -447,43 +482,59 @@ def main():
                 chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "")
 
+                # Ignore non-text messages (photos, voice, documents, etc.)
+                if msg.get("photo") or msg.get("voice") or msg.get("document") or msg.get("video"):
+                    if chat_id:
+                        send_message(
+                            chat_id,
+                            "⚠️ I can only interpret text descriptions of dreams.\n\n"
+                            "Please describe your dream in words (English, Russian, or Kazakh)."
+                        )
+                    continue
+
                 if not chat_id or not text:
                     continue
 
-                logger.info(f"Received message from {chat_id}: {text[:50]}...")
+                logger.info(f"Message from {chat_id}: {text[:50]}...")
 
                 # Handle /start command
                 if text.startswith("/start"):
                     send_message(
                         chat_id,
-                        "👋 Welcome! Send me your dream (English, Russian or Kazakh) and I will interpret it using classical Islamic sources.\n\n"
-                        f"📝 Please keep your dream description under {MAX_MESSAGE_LENGTH} characters."
+                        "👋 Welcome to DreamWisdom Bot!\n\n"
+                        "I interpret dreams using classical Islamic sources.\n\n"
+                        "🌐 Languages: English, Russian, Kazakh\n"
+                        f"📝 Length: {MIN_MESSAGE_LENGTH}-{MAX_MESSAGE_LENGTH} characters\n"
+                        "💬 Text only (no images or voice)\n\n"
+                        "Just send me your dream description and I'll interpret it!"
                     )
                     continue
 
                 # Check rate limit
-                if not check_rate_limit(chat_id):
+                can_proceed, remaining = check_rate_limit(chat_id)
+                if not can_proceed:
                     send_message(
                         chat_id,
-                        f"⏳ Please wait {MIN_REQUEST_INTERVAL} seconds between requests."
+                        f"⏳ Please wait {int(remaining)+1} seconds before sending another dream."
                     )
-                    logger.warning(f"Rate limit exceeded for chat {chat_id}")
+                    logger.warning(f"Rate limit: chat {chat_id}, {remaining:.1f}s remaining")
                     continue
 
                 # Validate message length
                 if len(text) > MAX_MESSAGE_LENGTH:
                     send_message(
                         chat_id,
-                        f"❌ Dream too long. Please keep it under {MAX_MESSAGE_LENGTH} characters.\n\n"
-                        f"Your message: {len(text)} characters"
+                        f"❌ Dream too long ({len(text)} characters).\n\n"
+                        f"Please keep it under {MAX_MESSAGE_LENGTH} characters."
                     )
-                    logger.warning(f"Message too long from chat {chat_id}: {len(text)} chars")
+                    logger.warning(f"Message too long from {chat_id}: {len(text)} chars")
                     continue
 
                 if len(text.strip()) < MIN_MESSAGE_LENGTH:
                     send_message(
                         chat_id,
-                        f"❌ Dream too short. Please provide at least {MIN_MESSAGE_LENGTH} characters."
+                        f"❌ Dream too short.\n\n"
+                        f"Please provide at least {MIN_MESSAGE_LENGTH} characters."
                     )
                     continue
 
@@ -493,20 +544,21 @@ def main():
                 try:
                     answer = interpret(text)
                     send_message(chat_id, answer)
-                    logger.info(f"Successfully processed dream for chat {chat_id}")
+                    logger.info(f"✓ Success: chat {chat_id}")
 
                 except ValueError as e:
                     # Client error (validation)
                     send_message(chat_id, f"❌ {str(e)}")
-                    logger.warning(f"Validation error for chat {chat_id}: {e}")
+                    logger.warning(f"Validation error for {chat_id}: {e}")
 
                 except Exception as e:
                     # Server error
                     send_message(
                         chat_id,
-                        "❌ Sorry, I encountered an error while interpreting your dream. Please try again in a moment."
+                        "❌ Sorry, I encountered an error while interpreting your dream.\n\n"
+                        "Please try again in a moment."
                     )
-                    logger.error(f"Error processing dream for chat {chat_id}: {e}", exc_info=True)
+                    logger.error(f"✗ Error for chat {chat_id}: {e}", exc_info=True)
 
             # Save offset after processing all updates
             if offset:
