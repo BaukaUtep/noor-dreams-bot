@@ -409,7 +409,7 @@ def build_user_prompt(question: str, lang: str) -> str:
 def interpret(question: str) -> str:
     """
     Main interpretation function - used by both bot and web API
-    TEXT ONLY - gpt-4o-mini (no images, no voice)
+    TEXT ONLY - gpt-5.4-nano (no images, no voice)
     """
     # Validate input
     question = question.strip()
