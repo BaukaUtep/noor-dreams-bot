@@ -299,10 +299,11 @@ def _translate_to_english(text: str) -> str:
         chat = openai_client.chat.completions.create(
             model=CHAT_MODEL,
             messages=[
-                {"role": "system", "content": "Translate to English. Keep names and religious terms intact."},
+                {"role": "developer", "content": "Translate to English. Keep names and religious terms intact."},
                 {"role": "user",   "content": text}
             ],
             max_tokens=800,
+            reasoning_effort="low",
             timeout=OPENAI_TIMEOUT
         )
         return chat.choices[0].message.content.strip()
@@ -430,11 +431,11 @@ def interpret(question: str) -> str:
         chat = openai_client.chat.completions.create(
             model=CHAT_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "developer", "content": system_prompt},
                 {"role": "user",   "content": user_prompt}
             ],
-            max_tokens=MAX_TOKENS_OUTPUT,
-            temperature=0.3,
+            max_completion_tokens=MAX_TOKENS_OUTPUT,
+            reasoning_effort="low",
             timeout=OPENAI_TIMEOUT
         )
         answer = chat.choices[0].message.content.strip()
