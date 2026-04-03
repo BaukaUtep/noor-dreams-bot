@@ -22,7 +22,7 @@ PINECONE_INDEX   = "noor-dreams"
 # Model settings (TEXT ONLY)
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIM        = 1536
-CHAT_MODEL       = "gpt-5.4-nano"  # TEXT ONLY - no images, no voice
+CHAT_MODEL       = "gpt-5-mini"  # TEXT ONLY - no images, no voice
 TOP_K            = 5
 
 # API endpoints
@@ -409,7 +409,7 @@ def build_user_prompt(question: str, lang: str) -> str:
 def interpret(question: str) -> str:
     """
     Main interpretation function - used by both bot and web API
-    TEXT ONLY - gpt-5.4-nano (no images, no voice)
+    TEXT ONLY - gpt-5-mini (no images, no voice)
     """
     # Validate input
     question = question.strip()
