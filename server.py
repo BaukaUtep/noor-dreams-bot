@@ -114,7 +114,7 @@ async def api_interpret_post(request: Request, body: QueryBody):
     """
     Interpret a dream using POST method (TEXT ONLY)
 
-    Model: gpt-5.4-nano (text-only, no images or voice)
+    Model: gpt-5-mini (text-only, no images or voice)
     Rate limit: 30 requests per minute per IP
     Max message length: 500 characters
 
@@ -163,7 +163,7 @@ async def api_interpret_get(
     """
     Interpret a dream using GET method (TEXT ONLY)
 
-    Model: gpt-5.4-nano (text-only, no images or voice)
+    Model: gpt-5-mini (text-only, no images or voice)
     Rate limit: 30 requests per minute per IP
     Max message length: 500 characters
 
@@ -202,7 +202,7 @@ async def startup_event():
     logger.info("=" * 60)
     logger.info(f"Rate limit: {WEB_RATE_LIMIT} per IP")
     logger.info(f"Message length: {MIN_MESSAGE_LENGTH}-{MAX_MESSAGE_LENGTH} chars")
-    logger.info(f"Model: gpt-5.4-nano (text-only)")
+    logger.info(f"Model: gpt-5-mini (text-only)")
     logger.info("=" * 60)
 
 @app.on_event("shutdown")
