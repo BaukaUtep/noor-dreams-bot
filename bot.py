@@ -22,7 +22,7 @@ PINECONE_INDEX   = "noor-dreams"
 # Model settings (TEXT ONLY)
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIM        = 1536
-CHAT_MODEL       = "gpt-4o-mini"  # TEXT ONLY - no images, no voice
+CHAT_MODEL       = "gpt-5.4-nano"  # TEXT ONLY - no images, no voice
 TOP_K            = 5
 
 # API endpoints
