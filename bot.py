@@ -31,7 +31,7 @@ TELEGRAM_API     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 # Limits and timeouts
 MAX_MESSAGE_LENGTH    = 500
 MIN_MESSAGE_LENGTH    = 3
-MAX_TOKENS_OUTPUT     = 800
+MAX_TOKENS_OUTPUT     = 1600
 OPENAI_TIMEOUT        = 60.0
 TELEGRAM_TIMEOUT      = 30
 REQUEST_TIMEOUT       = 10
@@ -302,8 +302,8 @@ def _translate_to_english(text: str) -> str:
                 {"role": "developer", "content": "Translate to English. Keep names and religious terms intact."},
                 {"role": "user",   "content": text}
             ],
-            max_tokens=800,
-            reasoning_effort="high",
+            max_tokens=1600,
+            reasoning_effort="medium",
             timeout=OPENAI_TIMEOUT
         )
         return chat.choices[0].message.content.strip()
@@ -435,7 +435,7 @@ def interpret(question: str) -> str:
                 {"role": "user",   "content": user_prompt}
             ],
             max_completion_tokens=MAX_TOKENS_OUTPUT,
-            reasoning_effort="high",
+            reasoning_effort="medium",
             timeout=OPENAI_TIMEOUT
         )
         answer = chat.choices[0].message.content.strip()
