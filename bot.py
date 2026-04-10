@@ -380,19 +380,6 @@ EXCERPTS:
 RESPONSE FORMAT:
 [Interpretation in 2–3 clear sentences]
 
-[Optional: Additional symbolic meanings if relevant]
-
-EXAMPLE FOR "БУТЫЛКА ВО СНЕ":
-Приснившаяся бутылка может символизировать скрытые эмоции или желания, которые ждут своего выражения. Также может указывать на необходимость расслабления.
-
-EXAMPLE FOR "DREAM OF PHONE":
-Dreaming of a phone may represent important messages or communications coming your way.
-
-PROHIBITED:
-- Technical details (sources, confidence levels)
-- Empty sections like "Uninterpreted Elements: None"
-- Mixing languages in response
-- Any interpretation not grounded in the excerpts above
 """.strip()
 
 def build_user_prompt(question: str, lang: str) -> str:
