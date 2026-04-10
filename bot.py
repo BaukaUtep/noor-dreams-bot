@@ -385,14 +385,8 @@ RESPONSE FORMAT:
 EXAMPLE FOR "БУТЫЛКА ВО СНЕ":
 Приснившаяся бутылка может символизировать скрытые эмоции или желания, которые ждут своего выражения. Также может указывать на необходимость расслабления.
 
-Символическое значение:
-• Бутылка — скрытые чувства или невыраженные желания
-
 EXAMPLE FOR "DREAM OF PHONE":
 Dreaming of a phone may represent important messages or communications coming your way.
-
-Symbolic meaning:
-• Phone — important news (interpreted from classical message symbolism)
 
 PROHIBITED:
 - Technical details (sources, confidence levels)
