@@ -357,48 +357,22 @@ def retrieve_context(question: str, lang_code: str, top_k=TOP_K):
     return []
 
 # ===== PROMPT BUILDING =====
-def build_system_prompt(lang: str, contexts: List[str]) -> str:
-    """Build system prompt with retrieved contexts"""
+def build_user_prompt(question: str, lang: str) -> str:
     lang_name = LANG_NAME.get(lang, "English")
-    fb = FALLBACK.get(lang_name, FALLBACK["English"])
-    joined = "\n---\n".join(contexts) if contexts else "[NO RELEVANT EXCERPTS]"
+    return f"User language: {lang_name}. Answer only in {lang_name}. Dream: {question}"
 
     return f"""
-You are an Islamic dream interpreter analyzing visions through classical Islamic sources. Follow these guidelines:
+Output language is fixed: {lang_name}.
+You must write the entire answer only in {lang_name}.
+Do not use English unless the user's language is English.
+If excerpts are in another language, translate their meaning into {lang_name}.
+Use only the excerpts below.
+If the excerpts are insufficient or exactly "[NO RELEVANT EXCERPTS]", reply exactly: "{fb}"
 
-STRICT RULES:
-1) RESPOND IN USER'S LANGUAGE: Always match the language of the dream question.
-2) USE ONLY CLASSICAL SOURCES: Draw only from these excerpts below. If you see exactly "[NO RELEVANT EXCERPTS]" then reply exactly: "{fb}"
-3) MODERN ITEMS: Map to classical symbols as needed, and label such mappings as (generalized).
-
-GENERALIZATION HINTS:
-{GENERALIZATION_HINTS.strip()}
+Modern items may be mapped to classical symbols when necessary, and such mappings must be labeled as (generalized).
 
 EXCERPTS:
 {joined}
-
-RESPONSE FORMAT:
-[Interpretation in 2–3 clear sentences]
-
-[Optional: Additional symbolic meanings if relevant]
-
-EXAMPLE FOR "БУТЫЛКА ВО СНЕ":
-Приснившаяся бутылка может символизировать скрытые эмоции или желания, которые ждут своего выражения. Также может указывать на необходимость расслабления.
-
-Символическое значение:
-• Бутылка — скрытые чувства или невыраженные желания
-
-EXAMPLE FOR "DREAM OF PHONE":
-Dreaming of a phone may represent important messages or communications coming your way.
-
-Symbolic meaning:
-• Phone — important news (interpreted from classical message symbolism)
-
-PROHIBITED:
-- Technical details (sources, confidence levels)
-- Empty sections like "Uninterpreted Elements: None"
-- Mixing languages in response
-- Any interpretation not grounded in the excerpts above
 """.strip()
 
 def build_user_prompt(question: str, lang: str) -> str:
@@ -434,7 +408,7 @@ def interpret(question: str) -> str:
                 {"role": "developer", "content": system_prompt},
                 {"role": "user",   "content": user_prompt}
             ],
-            max_completion_tokens=MAX_TOKENS_OUTPUT,
+            max_completion_tokens=800,
             reasoning_effort="medium",
             timeout=OPENAI_TIMEOUT
         )
