@@ -303,7 +303,7 @@ def _translate_to_english(text: str) -> str:
                 {"role": "user",   "content": text}
             ],
             max_completion_tokens=1600,
-            reasoning={"effort": "low"},
+            reasoning_effort="low",
             timeout=OPENAI_TIMEOUT
         )
         return chat.choices[0].message.content.strip()
@@ -418,7 +418,7 @@ def interpret(question: str) -> str:
                 {"role": "user",   "content": user_prompt}
             ],
             max_completion_tokens=MAX_TOKENS_OUTPUT,
-            reasoning={"effort": "medium"},
+            reasoning_effort="medium",
             timeout=OPENAI_TIMEOUT
         )
         answer = chat.choices[0].message.content.strip()
