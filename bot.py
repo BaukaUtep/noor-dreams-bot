@@ -294,19 +294,19 @@ def _query_with_filter(emb, filter_obj, top_k):
     return res.get("matches") if isinstance(res, dict) else getattr(res, "matches", [])
 
 def _translate_to_english(text: str) -> str:
-    """Translate text to English using OpenAI"""
+    """Translate text to English using OpenAI Responses API"""
     try:
-        chat = openai_client.chat.completions.create(
+        result = openai_client.responses.create(
             model=CHAT_MODEL,
-            messages=[
+            input=[
                 {"role": "developer", "content": "Translate to English. Keep names and religious terms intact."},
-                {"role": "user",   "content": text}
+                {"role": "user", "content": text}
             ],
-            max_completion_tokens=1600,
-            reasoning_effort="low",
+            max_output_tokens=1600,
+            reasoning={"effort": "low"},
             timeout=OPENAI_TIMEOUT
         )
-        return chat.choices[0].message.content.strip()
+        return result.output_text.strip()
     except Exception as e:
         logger.error(f"Translation error: {e}")
         raise
@@ -392,8 +392,7 @@ def build_user_prompt(question: str, lang: str) -> str:
 # ===== CALL OPENAI CHAT =====
 def interpret(question: str) -> str:
     """
-    Main interpretation function - used by both bot and web API
-    TEXT ONLY - gpt-5-mini (no images, no voice)
+    Main interpretation function - using Responses API (GPT-5.4 recommended)
     """
     # Validate input
     question = question.strip()
@@ -407,24 +406,24 @@ def interpret(question: str) -> str:
 
     contexts = retrieve_context(question, lang)
     logger.info(f"Retrieved {len(contexts)} context blocks")
+
     system_prompt = build_system_prompt(lang, contexts)
     user_prompt = build_user_prompt(question, lang)
 
     try:
-        chat = openai_client.chat.completions.create(
+        result = openai_client.responses.create(
             model=CHAT_MODEL,
-            messages=[
+            input=[
                 {"role": "developer", "content": system_prompt},
-                {"role": "user",   "content": user_prompt}
+                {"role": "user", "content": user_prompt}
             ],
-            max_completion_tokens=MAX_TOKENS_OUTPUT,
-            reasoning_effort="medium",
+            max_output_tokens=MAX_TOKENS_OUTPUT,
+            reasoning={"effort": "medium"},
             timeout=OPENAI_TIMEOUT
         )
-        answer = chat.choices[0].message.content.strip()
+        answer = result.output_text.strip()
         logger.info("Successfully generated interpretation")
         return answer
-
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
         raise
