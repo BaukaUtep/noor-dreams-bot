@@ -257,17 +257,17 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 # ===== RETRIEVAL =====
 def _build_grouped_contexts(matches):
     """
-    Group sentences by symbol_id and keep up to PER_SYMBOL_MAX per symbol
+    Group sentences by symbol_id and keep up to PER_SYMBOL_MAX per symbol.
+    Improved: sentences are now sorted by index + cleaner, more readable format for the LLM.
     """
     buckets = {}
     for m in matches or []:
         md = m.get("metadata", {}) if isinstance(m, dict) else (getattr(m, "metadata", {}) or {})
-
-        symbol_id    = (md.get("symbol_id") or "symbol").strip()
+        symbol_id = (md.get("symbol_id") or "symbol").strip()
         symbol_label = (md.get("symbol_label") or symbol_id).strip()
-        sent_idx     = md.get("sentence_index", "?")
-        sent_text    = (md.get("text") or md.get("sentence_text") or md.get("content") or "").strip()
-        lang         = md.get("lang")
+        sent_idx = md.get("sentence_index", "?")
+        sent_text = (md.get("text") or md.get("sentence_text") or md.get("content") or "").strip()
+        lang = md.get("lang") or "?"
 
         if not sent_text:
             continue
@@ -280,10 +280,18 @@ def _build_grouped_contexts(matches):
     contexts = []
     for sid, data in buckets.items():
         label = data["label"]
+        
+        # Sort sentences by sentence_index (numeric sort when possible)
+        items = sorted(
+            data["items"],
+            key=lambda x: int(x[0]) if str(x[0]).isdigit() else 9999
+        )
+
         lines = [f"[{label} · {sid}]"]
-        for (idx, text, lg) in data["items"]:
-            lg_tag = f" ({lg})" if lg else ""
-            lines.append(f"• (sent {idx}){lg_tag} {text}")
+        for idx, text, lg in items:
+            lang_tag = f" [{lg}]" if lg and lg != "?" else ""
+            lines.append(f"• {idx}. {text}{lang_tag}")
+        
         contexts.append("\n".join(lines))
 
     return contexts
