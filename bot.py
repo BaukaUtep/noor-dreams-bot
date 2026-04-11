@@ -22,7 +22,7 @@ PINECONE_INDEX   = "noor-dreams"
 # Model settings (TEXT ONLY)
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIM        = 1536
-CHAT_MODEL       = "gpt-5.4-mini"  # TEXT ONLY - no images, no voice
+CHAT_MODEL       = "gpt-4o-mini"  # TEXT ONLY - no images, no voice
 TOP_K            = 5
 
 # API endpoints
@@ -31,8 +31,8 @@ TELEGRAM_API     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 # Limits and timeouts
 MAX_MESSAGE_LENGTH    = 500
 MIN_MESSAGE_LENGTH    = 3
-MAX_TOKENS_OUTPUT     = 1600
-OPENAI_TIMEOUT        = 60.0
+MAX_TOKENS_OUTPUT     = 800
+OPENAI_TIMEOUT        = 30.0
 TELEGRAM_TIMEOUT      = 30
 REQUEST_TIMEOUT       = 10
 
@@ -257,17 +257,17 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 # ===== RETRIEVAL =====
 def _build_grouped_contexts(matches):
     """
-    Group sentences by symbol_id and keep up to PER_SYMBOL_MAX per symbol.
-    Improved: sentences are now sorted by index + cleaner, more readable format for the LLM.
+    Group sentences by symbol_id and keep up to PER_SYMBOL_MAX per symbol
     """
     buckets = {}
     for m in matches or []:
         md = m.get("metadata", {}) if isinstance(m, dict) else (getattr(m, "metadata", {}) or {})
-        symbol_id = (md.get("symbol_id") or "symbol").strip()
+
+        symbol_id    = (md.get("symbol_id") or "symbol").strip()
         symbol_label = (md.get("symbol_label") or symbol_id).strip()
-        sent_idx = md.get("sentence_index", "?")
-        sent_text = (md.get("text") or md.get("sentence_text") or md.get("content") or "").strip()
-        lang = md.get("lang") or "?"
+        sent_idx     = md.get("sentence_index", "?")
+        sent_text    = (md.get("text") or md.get("sentence_text") or md.get("content") or "").strip()
+        lang         = md.get("lang")
 
         if not sent_text:
             continue
@@ -280,18 +280,10 @@ def _build_grouped_contexts(matches):
     contexts = []
     for sid, data in buckets.items():
         label = data["label"]
-        
-        # Sort sentences by sentence_index (numeric sort when possible)
-        items = sorted(
-            data["items"],
-            key=lambda x: int(x[0]) if str(x[0]).isdigit() else 9999
-        )
-
         lines = [f"[{label} · {sid}]"]
-        for idx, text, lg in items:
-            lang_tag = f" [{lg}]" if lg and lg != "?" else ""
-            lines.append(f"• {idx}. {text}{lang_tag}")
-        
+        for (idx, text, lg) in data["items"]:
+            lg_tag = f" ({lg})" if lg else ""
+            lines.append(f"• (sent {idx}){lg_tag} {text}")
         contexts.append("\n".join(lines))
 
     return contexts
@@ -302,19 +294,18 @@ def _query_with_filter(emb, filter_obj, top_k):
     return res.get("matches") if isinstance(res, dict) else getattr(res, "matches", [])
 
 def _translate_to_english(text: str) -> str:
-    """Translate text to English using OpenAI Responses API"""
+    """Translate text to English using OpenAI"""
     try:
-        result = openai_client.responses.create(
+        chat = openai_client.chat.completions.create(
             model=CHAT_MODEL,
-            input=[
-                {"role": "developer", "content": "Translate to English. Keep names and religious terms intact."},
-                {"role": "user", "content": text}
+            messages=[
+                {"role": "system", "content": "Translate to English. Keep names and religious terms intact."},
+                {"role": "user",   "content": text}
             ],
-            max_output_tokens=1600,
-            reasoning={"effort": "low"},
+            max_tokens=800,
             timeout=OPENAI_TIMEOUT
         )
-        return result.output_text.strip()
+        return chat.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Translation error: {e}")
         raise
@@ -372,24 +363,41 @@ def build_system_prompt(lang: str, contexts: List[str]) -> str:
     joined = "\n---\n".join(contexts) if contexts else "[NO RELEVANT EXCERPTS]"
 
     return f"""
-You are an expert Islamic dream interpreter. You analyze dreams strictly using classical Islamic sources (Ibn Sirin, Al-Nabulsi, and similar traditional scholars).
+You are an Islamic dream interpreter analyzing visions through classical Islamic sources. Follow these guidelines:
 
-STRICT RULES — NEVER BREAK THEM:
-1. Respond ONLY in the user's language: {lang_name}.
-2. Use ONLY the excerpts provided below. Do not add any external knowledge, modern interpretations, or personal opinions.
-3. If the text below says exactly "[NO RELEVANT EXCERPTS]", reply with this exact sentence and nothing else: "{fb}"
-4. For modern objects or situations (phone, car, computer, airplane, etc.), map them gently to classical symbols and label it as (generalized).
+STRICT RULES:
+1) RESPOND IN USER'S LANGUAGE: Always match the language of the dream question.
+2) USE ONLY CLASSICAL SOURCES: Draw only from these excerpts below. If you see exactly "[NO RELEVANT EXCERPTS]" then reply exactly: "{fb}"
+3) MODERN ITEMS: Map to classical symbols as needed, and label such mappings as (generalized).
 
 GENERALIZATION HINTS:
 {GENERALIZATION_HINTS.strip()}
 
-EXCERPTS FROM CLASSICAL SOURCES:
+EXCERPTS:
 {joined}
 
-RESPONSE INSTRUCTIONS:
-- Give a clear, respectful interpretation in 2–3 concise sentences.
-- Do not add extra explanations, greetings, or questions.
-- Do not use markdown, bullet points, or lists unless the excerpts themselves require it.
+RESPONSE FORMAT:
+[Interpretation in 2–3 clear sentences]
+
+[Optional: Additional symbolic meanings if relevant]
+
+EXAMPLE FOR "БУТЫЛКА ВО СНЕ":
+Приснившаяся бутылка может символизировать скрытые эмоции или желания, которые ждут своего выражения. Также может указывать на необходимость расслабления.
+
+Символическое значение:
+• Бутылка — скрытые чувства или невыраженные желания
+
+EXAMPLE FOR "DREAM OF PHONE":
+Dreaming of a phone may represent important messages or communications coming your way.
+
+Symbolic meaning:
+• Phone — important news (interpreted from classical message symbolism)
+
+PROHIBITED:
+- Technical details (sources, confidence levels)
+- Empty sections like "Uninterpreted Elements: None"
+- Mixing languages in response
+- Any interpretation not grounded in the excerpts above
 """.strip()
 
 def build_user_prompt(question: str, lang: str) -> str:
@@ -400,7 +408,8 @@ def build_user_prompt(question: str, lang: str) -> str:
 # ===== CALL OPENAI CHAT =====
 def interpret(question: str) -> str:
     """
-    Main interpretation function - using Responses API (GPT-5.4 recommended)
+    Main interpretation function - used by both bot and web API
+    TEXT ONLY - gpt-4o-mini (no images, no voice)
     """
     # Validate input
     question = question.strip()
@@ -414,24 +423,24 @@ def interpret(question: str) -> str:
 
     contexts = retrieve_context(question, lang)
     logger.info(f"Retrieved {len(contexts)} context blocks")
-
     system_prompt = build_system_prompt(lang, contexts)
     user_prompt = build_user_prompt(question, lang)
 
     try:
-        result = openai_client.responses.create(
+        chat = openai_client.chat.completions.create(
             model=CHAT_MODEL,
-            input=[
-                {"role": "developer", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt}
             ],
-            max_output_tokens=MAX_TOKENS_OUTPUT,
-            reasoning={"effort": "medium"},
+            max_tokens=MAX_TOKENS_OUTPUT,
+            temperature=0.3,
             timeout=OPENAI_TIMEOUT
         )
-        answer = result.output_text.strip()
+        answer = chat.choices[0].message.content.strip()
         logger.info("Successfully generated interpretation")
         return answer
+
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
         raise
