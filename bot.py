@@ -22,7 +22,7 @@ PINECONE_INDEX   = "noor-dreams"
 # Model settings (TEXT ONLY)
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIM        = 1536
-CHAT_MODEL       = "gpt-5-mini"  # TEXT ONLY - no images, no voice
+CHAT_MODEL       = "gpt-5.4-mini"  # TEXT ONLY - no images, no voice
 TOP_K            = 5
 
 # API endpoints
@@ -303,7 +303,7 @@ def _translate_to_english(text: str) -> str:
                 {"role": "user",   "content": text}
             ],
             max_tokens=1600,
-            reasoning_effort="medium",
+            reasoning={"effort": "low"},
             timeout=OPENAI_TIMEOUT
         )
         return chat.choices[0].message.content.strip()
@@ -364,22 +364,24 @@ def build_system_prompt(lang: str, contexts: List[str]) -> str:
     joined = "\n---\n".join(contexts) if contexts else "[NO RELEVANT EXCERPTS]"
 
     return f"""
-You are an Islamic dream interpreter analyzing visions through classical Islamic sources. Follow these guidelines:
+You are an expert Islamic dream interpreter. You analyze dreams strictly using classical Islamic sources (Ibn Sirin, Al-Nabulsi, and similar traditional scholars).
 
-STRICT RULES:
-1) RESPOND IN USER'S LANGUAGE: Always match the language of the dream question.
-2) USE ONLY CLASSICAL SOURCES: Draw only from these excerpts below. If you see exactly "[NO RELEVANT EXCERPTS]" then reply exactly: "{fb}"
-3) MODERN ITEMS: Map to classical symbols as needed, and label such mappings as (generalized).
+STRICT RULES — NEVER BREAK THEM:
+1. Respond ONLY in the user's language: {lang_name}.
+2. Use ONLY the excerpts provided below. Do not add any external knowledge, modern interpretations, or personal opinions.
+3. If the text below says exactly "[NO RELEVANT EXCERPTS]", reply with this exact sentence and nothing else: "{fb}"
+4. For modern objects or situations (phone, car, computer, airplane, etc.), map them gently to classical symbols and label it as (generalized).
 
 GENERALIZATION HINTS:
 {GENERALIZATION_HINTS.strip()}
 
-EXCERPTS:
+EXCERPTS FROM CLASSICAL SOURCES:
 {joined}
 
-RESPONSE FORMAT:
-[Interpretation in 2–3 clear sentences]
-
+RESPONSE INSTRUCTIONS:
+- Give a clear, respectful interpretation in 2–3 concise sentences.
+- Do not add extra explanations, greetings, or questions.
+- Do not use markdown, bullet points, or lists unless the excerpts themselves require it.
 """.strip()
 
 def build_user_prompt(question: str, lang: str) -> str:
@@ -416,7 +418,7 @@ def interpret(question: str) -> str:
                 {"role": "user",   "content": user_prompt}
             ],
             max_completion_tokens=MAX_TOKENS_OUTPUT,
-            reasoning_effort="medium",
+            reasoning={"effort": "medium"},
             timeout=OPENAI_TIMEOUT
         )
         answer = chat.choices[0].message.content.strip()
