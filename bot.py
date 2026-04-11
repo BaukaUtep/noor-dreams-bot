@@ -302,7 +302,7 @@ def _translate_to_english(text: str) -> str:
                 {"role": "developer", "content": "Translate to English. Keep names and religious terms intact."},
                 {"role": "user",   "content": text}
             ],
-            max_tokens=1600,
+            max_completion_tokens=1600,
             reasoning={"effort": "low"},
             timeout=OPENAI_TIMEOUT
         )
