@@ -16,7 +16,6 @@ from pinecone import Pinecone
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV     = os.getenv("PINECONE_ENVIRONMENT")
 PINECONE_INDEX   = "noor-dreams"
 
 # Model settings (TEXT ONLY)
@@ -80,8 +79,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===== VALIDATE ENVIRONMENT =====
-if not TELEGRAM_TOKEN:
-    raise RuntimeError("No TELEGRAM_TOKEN set")
 if not OPENAI_API_KEY:
     raise RuntimeError("No OPENAI_API_KEY set")
 if not PINECONE_API_KEY:
@@ -90,7 +87,7 @@ if not PINECONE_API_KEY:
 # ===== INIT CLIENTS =====
 try:
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV) if PINECONE_ENV else Pinecone(api_key=PINECONE_API_KEY)
+    pc = Pinecone(api_key=PINECONE_API_KEY)
     index = pc.Index(PINECONE_INDEX)
     logger.info("API clients initialized successfully")
     logger.info(f"Using model: {CHAT_MODEL} (text-only)")
@@ -456,6 +453,9 @@ def main():
     Main bot loop with improved error handling and rate limiting
     TEXT ONLY - handles only text messages (no images, voice, documents)
     """
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError("No TELEGRAM_TOKEN set")
+
     logger.info("=" * 60)
     logger.info("Dream Bot Started (Telegram)")
     logger.info("=" * 60)
