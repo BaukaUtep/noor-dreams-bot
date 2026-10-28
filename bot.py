@@ -21,7 +21,7 @@ PINECONE_INDEX   = "noor-dreams"
 # Model settings (TEXT ONLY)
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIM        = 1536
-CHAT_MODEL       = "gpt-4o-mini"  # TEXT ONLY - no images, no voice
+CHAT_MODEL       = os.getenv("CHAT_MODEL", "gpt-6-luna")  # TEXT ONLY - no images, no voice
 TOP_K            = 5
 
 # API endpoints
@@ -299,7 +299,8 @@ def _translate_to_english(text: str) -> str:
                 {"role": "system", "content": "Translate to English. Keep names and religious terms intact."},
                 {"role": "user",   "content": text}
             ],
-            max_tokens=800,
+            max_completion_tokens=800,
+            reasoning_effort="none",
             timeout=OPENAI_TIMEOUT
         )
         return chat.choices[0].message.content.strip()
@@ -406,7 +407,7 @@ def build_user_prompt(question: str, lang: str) -> str:
 def interpret(question: str) -> str:
     """
     Main interpretation function - used by both bot and web API
-    TEXT ONLY - gpt-4o-mini (no images, no voice)
+    TEXT ONLY - gpt-6-luna (no images, no voice)
     """
     # Validate input
     question = question.strip()
@@ -430,7 +431,8 @@ def interpret(question: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_prompt}
             ],
-            max_tokens=MAX_TOKENS_OUTPUT,
+            max_completion_tokens=MAX_TOKENS_OUTPUT,
+            reasoning_effort="none",
             temperature=0.3,
             timeout=OPENAI_TIMEOUT
         )
